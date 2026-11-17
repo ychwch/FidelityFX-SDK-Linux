@@ -76,6 +76,13 @@ file(GLOB private_ffx_api
 	${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 
+# The Linux library is currently used as an FSR3 upscaler provider. The other
+# providers pull in Win32/D3D12 APIs even for a Vulkan build and are not needed
+# by applications which request only FFX_API_EFFECT_ID_UPSCALE.
+if (UNIX)
+	list(FILTER private_ffx_api EXCLUDE REGEX "/ffx_provider_(external|framegeneration|fsr2)\\.(h|cpp)$")
+endif()
+
 file(GLOB public_ffx_api
 	${CMAKE_CURRENT_SOURCE_DIR}/include/ffx_api/*.h
 	${CMAKE_CURRENT_SOURCE_DIR}/include/ffx_api/*.hpp)
@@ -88,6 +95,9 @@ if (FFX_API_BACKEND STREQUAL VK_X64)
 	file(GLOB private_ffx_api_backend_vk
 		${CMAKE_CURRENT_SOURCE_DIR}/src/vk/*.h
 		${CMAKE_CURRENT_SOURCE_DIR}/src/vk/*.cpp)
+	if (UNIX)
+		set(private_ffx_api_backend_vk)
+	endif()
 
 	file(GLOB public_ffx_api_backend_vk
 		${CMAKE_CURRENT_SOURCE_DIR}/include/ffx_api/vk/*.h
@@ -132,19 +142,42 @@ target_include_directories(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE ${CMAKE_C
 
 # FSR dependency, must be built before using BuildFidelityFXSDK.bat
 
-set(FFX_FSR2 ON)
+if (UNIX)
+	set(FFX_FSR2 OFF)
+	set(FFX_FI OFF CACHE BOOL "" FORCE)
+	set(FFX_OF OFF CACHE BOOL "" FORCE)
+else()
+	set(FFX_FSR2 ON)
+	set(FFX_FI ON)
+	set(FFX_OF ON)
+endif()
 set(FFX_FSR3 ON)
 set(FFX_FSR3UPSCALER ON)
-set(FFX_OF ON)
-set(FFX_FI ON)
 set(FFX_AUTO_COMPILE_SHADERS ON)
 set(FFX_BUILD_AS_DLL OFF)
 add_subdirectory(../sdk sdk)
 
-target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE ffx_fsr2_${CMAKE_GENERATOR_PLATFORM} ffx_fsr3upscaler_${CMAKE_GENERATOR_PLATFORM} ffx_opticalflow_${CMAKE_GENERATOR_PLATFORM} ffx_frameinterpolation_${CMAKE_GENERATOR_PLATFORM} DXGI)
+if (UNIX)
+	target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE ffx_fsr3upscaler_x64)
+	# Keep the source-built loader relocatable together with its backend instead
+	# of recording the configure machine's absolute build directory in RUNPATH.
+	set_target_properties(amd_fidelityfx_${FFX_PLATFORM_NAME} PROPERTIES BUILD_RPATH_USE_ORIGIN TRUE)
+else()
+	target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE ffx_fsr2_${CMAKE_GENERATOR_PLATFORM} ffx_fsr3upscaler_${CMAKE_GENERATOR_PLATFORM} ffx_opticalflow_${CMAKE_GENERATOR_PLATFORM} ffx_frameinterpolation_${CMAKE_GENERATOR_PLATFORM} DXGI)
+endif()
 if (FFX_API_BACKEND STREQUAL VK_X64)
 	find_package(Vulkan REQUIRED)
-	target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE Vulkan::Headers ffx_backend_vk_${CMAKE_GENERATOR_PLATFORM})
+	if (UNIX)
+		target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE Vulkan::Headers ffx_backend_vk_x64)
+		option(FFX_API_BUILD_VK_SMOKE "Build the native Vulkan FSR dispatch smoke test" OFF)
+		if (FFX_API_BUILD_VK_SMOKE)
+			add_executable(ffx_api_vk_smoke tests/ffx_upscale_vulkan_smoke.cpp)
+			target_include_directories(ffx_api_vk_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+			target_link_libraries(ffx_api_vk_smoke PRIVATE Vulkan::Vulkan ${CMAKE_DL_LIBS})
+		endif()
+	else()
+		target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE Vulkan::Headers ffx_backend_vk_${CMAKE_GENERATOR_PLATFORM})
+	endif()
 else() # DX12
 	target_link_libraries(amd_fidelityfx_${FFX_PLATFORM_NAME} PRIVATE D3D12 ffx_backend_dx12_${CMAKE_GENERATOR_PLATFORM})
 endif()

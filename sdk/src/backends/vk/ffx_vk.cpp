@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <new>
 
 #include <FidelityFX/host/ffx_interface.h>
@@ -420,7 +421,13 @@ FfxErrorCode ffxGetInterfaceVK(
     backendInterface->fpBreadcrumbsWrite = BreadcrumbsWriteVK;
     backendInterface->fpBreadcrumbsPrintDeviceInfo = BreadcrumbsPrintDeviceInfoVK;
     backendInterface->fpRegisterConstantBufferAllocator = RegisterConstantBufferAllocatorVK;
+#if defined(_WIN32)
     backendInterface->fpSwapChainConfigureFrameGeneration = ffxSetFrameGenerationConfigToSwapchainVK;
+#else
+    // The native Linux upscaler build excludes the Win32-based frame-generation
+    // swapchain. Upscaling never calls this optional interface entry.
+    backendInterface->fpSwapChainConfigureFrameGeneration = nullptr;
+#endif
 
     // Memory assignments
     backendInterface->scratchBuffer = scratchBuffer;
@@ -487,20 +494,26 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
     }
 
     uint32_t bestCandidate = UINT32_MAX;
+    uint32_t unifiedFallback = UINT32_MAX;
+    VkMemoryPropertyFlags unifiedProperties = 0;
 
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((memRequirements.memoryTypeBits & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & requestedProperties)) {
-
-            // if just device-local memory is requested, make sure this is the invisible heap to prevent over-subscribing the local heap
-            if (requestedProperties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
-                continue;
+        const VkMemoryPropertyFlags properties = memProperties.memoryTypes[i].propertyFlags;
+        if ((memRequirements.memoryTypeBits & (1u << i)) && (properties & requestedProperties) == requestedProperties) {
 
             // Skip AMD device-coherent memory — requires deviceCoherentMemory feature which we don't enable
-            if (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD)
+            if (properties & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD)
                 continue;
 
+            // Prefer invisible VRAM for device-only resources. UMA devices have no such type, so retain their
+            // host-visible device-local type as a fallback instead of reporting that no memory exists.
+            if (requestedProperties == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+                if (unifiedFallback == UINT32_MAX) unifiedFallback = i, unifiedProperties = properties;
+                continue;
+            }
+
             bestCandidate = i;
-            outProperties = memProperties.memoryTypes[i].propertyFlags;
+            outProperties = properties;
 
             // if host-visible memory is requested, check for host coherency as well and if available, return immediately
             if ((requestedProperties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
@@ -508,6 +521,8 @@ uint32_t findMemoryTypeIndex(VkPhysicalDevice physicalDevice, VkMemoryRequiremen
         }
     }
 
+    if (bestCandidate == UINT32_MAX && unifiedFallback != UINT32_MAX)
+        bestCandidate = unifiedFallback, outProperties = unifiedProperties;
     return bestCandidate;
 }
 

@@ -22,8 +22,9 @@
 
 #include "ffx_provider.h"
 
-#include "ffx_provider_fsr2.h"
 #include "ffx_provider_fsr3upscale.h"
+#if defined(_WIN32)
+#include "ffx_provider_fsr2.h"
 #include "ffx_provider_framegeneration.h"
 #include "ffx_provider_external.h"
 
@@ -31,17 +32,19 @@
 #include <optional>
 
 #include <d3d12.h>
+#endif
 
-#ifdef FFX_BACKEND_DX12
+#if defined(_WIN32) && defined(FFX_BACKEND_DX12)
 #include "dx12/ffx_provider_framegenerationswapchain_dx12.h"
 #endif // FFX_BACKEND_DX12
 
-#ifdef FFX_BACKEND_VK
+#if defined(_WIN32) && defined(FFX_BACKEND_VK)
 #include "vk/ffx_provider_framegenerationswapchain_vk.h"
 #endif // FFX_BACKEND_VK
 
 static constexpr ffxProvider* providers[] = {
     &ffxProvider_FSR3Upscale::Instance,
+#if defined(_WIN32)
     &ffxProvider_FSR2::Instance,
     &ffxProvider_FrameGeneration::Instance,
 #ifdef FFX_BACKEND_DX12
@@ -50,9 +53,11 @@ static constexpr ffxProvider* providers[] = {
 #ifdef FFX_BACKEND_VK
     &ffxProvider_FrameGenerationSwapChain_VK::Instance,
 #endif // FFX_BACKEND_VK
+#endif // _WIN32
 };
-static constexpr size_t providerCount = _countof(providers);
+static constexpr size_t providerCount = sizeof(providers) / sizeof(providers[0]);
 
+#if defined(_WIN32)
 static std::array<std::optional<ffxProviderExternal>, 10> externalProviders = {};
 
 MIDL_INTERFACE("b58d6601-7401-4234-8180-6febfc0e484c")
@@ -130,15 +135,21 @@ void GetExternalProviders(ID3D12Device* device, uint64_t descType)
     }
     
 }
+#endif // _WIN32
 
 const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId, void* device)
 {
-    // check driver-side providers
+    // Driver-side provider overrides are exposed by the Windows D3D driver.
+#if defined(_WIN32)
     GetExternalProviders(reinterpret_cast<ID3D12Device*>(device), descType);
+#else
+    (void)device;
+#endif
 
     // If we are overriding, do not make the best provider choice decision
     if (overrideId)
     {
+#if defined(_WIN32)
         for (const auto& provider : externalProviders)
         {
             if (provider.has_value())
@@ -147,6 +158,7 @@ const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId,
                     return &*provider;
             }
         }
+#endif
 
         for (size_t i = 0; i < providerCount; ++i)
         {
@@ -157,9 +169,10 @@ const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId,
     }
     else
     {
-        const ffxProvider* bestExternalProvider = nullptr;
         const ffxProvider* bestInternalProvider = nullptr;
 
+#if defined(_WIN32)
+        const ffxProvider* bestExternalProvider = nullptr;
         for (const auto& provider : externalProviders)
         {
             if (provider.has_value())
@@ -171,6 +184,7 @@ const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId,
                 }
             }
         }
+#endif
 
         for (size_t i = 0; i < providerCount; ++i)
         {
@@ -181,6 +195,7 @@ const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId,
             }
         }
 
+#if defined(_WIN32)
         if ((bestExternalProvider != nullptr) && (bestInternalProvider != nullptr))
         {
             // Do a version check, and take the newest version.
@@ -193,6 +208,7 @@ const ffxProvider* GetffxProvider(ffxStructType_t descType, uint64_t overrideId,
                 return bestExternalProvider;
             }
         }
+#endif
 
         return bestInternalProvider;
     }
@@ -216,6 +232,7 @@ uint64_t GetProviderVersions(ffxStructType_t descType, void* device, uint64_t ca
 {
     uint64_t count = 0;
 
+#if defined(_WIN32)
     // check driver-side providers
     GetExternalProviders(reinterpret_cast<ID3D12Device*>(device), descType);
 
@@ -232,6 +249,9 @@ uint64_t GetProviderVersions(ffxStructType_t descType, void* device, uint64_t ca
                 versionNames[index] = provider->GetVersionName();
         }
     }
+#else
+    (void)device;
+#endif
 
     for (size_t i = 0; i < providerCount; ++i)
     {

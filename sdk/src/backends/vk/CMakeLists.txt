@@ -68,13 +68,19 @@ endif()
 # library (AMD's Windows build produces them as separate static libs).
 if(UNIX)
     set(FFX_COMPONENTS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../components")
-    list(APPEND PRIVATE_SOURCE
-        "${FFX_COMPONENTS_PATH}/fsr3upscaler/ffx_fsr3upscaler.cpp"
-        "${FFX_COMPONENTS_PATH}/opticalflow/ffx_opticalflow.cpp"
-        "${FFX_COMPONENTS_PATH}/frameinterpolation/ffx_frameinterpolation.cpp"
-        "${FFX_COMPONENTS_PATH}/spd/ffx_spd.cpp"
-        "${FFX_SHARED_PATH}/ffx_object_management.cpp"
-    )
+    list(APPEND PRIVATE_SOURCE "${FFX_SHARED_PATH}/ffx_object_management.cpp")
+    if(FFX_FSR3UPSCALER OR FFX_ALL)
+        list(APPEND PRIVATE_SOURCE "${FFX_COMPONENTS_PATH}/fsr3upscaler/ffx_fsr3upscaler.cpp")
+    endif()
+    if(FFX_OF OR FFX_ALL)
+        list(APPEND PRIVATE_SOURCE "${FFX_COMPONENTS_PATH}/opticalflow/ffx_opticalflow.cpp")
+    endif()
+    if(FFX_FI OR FFX_ALL)
+        list(APPEND PRIVATE_SOURCE "${FFX_COMPONENTS_PATH}/frameinterpolation/ffx_frameinterpolation.cpp")
+    endif()
+    if(FFX_SPD OR FFX_ALL)
+        list(APPEND PRIVATE_SOURCE "${FFX_COMPONENTS_PATH}/spd/ffx_spd.cpp")
+    endif()
     # Force-include POSIX compat header for component sources (they use _countof, wcscmp, etc.)
     # Do NOT use VK_NO_PROTOTYPES here — FFX must call Vulkan functions through libvulkan.so,
     # not volk's data symbols. Building as a shared library ensures GOT entries resolve to

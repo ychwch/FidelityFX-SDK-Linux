@@ -111,12 +111,45 @@ The first build compiles every shader permutation through `ffx_sc_native.py` and
 a couple of minutes; the configuration above yields 300 deduplicated permutation
 headers. Subsequent builds are incremental.
 
+### FidelityFX API upscaler loader
+
+Applications which use the five-entry-point FidelityFX API can build a native Linux
+Vulkan loader directly from source. This configuration deliberately includes only the
+FSR3 upscaler provider; frame interpolation and its Win32 swapchain provider are not
+exposed by this library.
+
+```sh
+cmake -S ffx-api -B ffx-api/build_linux -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DFFX_API_BACKEND=VK_X64 \
+    -DFFX_AUTO_COMPILE_SHADERS=ON \
+    -DFFX_API_BUILD_VK_SMOKE=ON
+
+cmake --build ffx-api/build_linux \
+    --target amd_fidelityfx_vk ffx_api_vk_smoke \
+    -j"$(nproc)"
+
+ffx-api/bin/ffx_api_vk_smoke \
+    ffx-api/build_linux/libamd_fidelityfx_vk.so
+```
+
+The smoke test creates a 64x64 native-AA context, records reset and retained-history
+FSR3 frames, then records a third retained-history frame with RCAS at 0.3 and reads that
+output back. It fails on an unwritten output, a non-finite value, or a mean RGBA channel
+more than 0.02 away from the constant linear input `(0.25, 0.5, 0.75, 1.0)`. This catches
+zero/white output, accidental colour-domain conversion, and constant-colour sharpening
+errors as well as loader or dispatch failure. The `VK_X64` spelling is the SDK's
+existing backend selector; on Linux the binaries use the configure host's actual
+architecture. Keep the build tree together: the loader's origin-relative runpath
+resolves its Vulkan backend under that tree.
+
 ### Output
 
 | Artifact | Path |
 | --- | --- |
 | Vulkan backend (shared) | `sdk/build_linux/src/backends/vk/libffx_backend_vk_x64.so` |
 | Component static libs | `sdk/bin/ffx_sdk/*.a` |
+| FidelityFX API loader (optional build above) | `ffx-api/build_linux/libamd_fidelityfx_vk.so` |
 
 The backend is built as a **shared library** on Linux, and that is deliberate — see
 [Linking against volk](#linking-against-volk) below.
